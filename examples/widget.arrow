@@ -1,0 +1,29 @@
+widget ProfileTile {
+  // Widget attributes
+  // positional attributes
+  // WARNING: the order of the attributes is important
+  positional attribute String positionalAttr;
+  positional attribute String? positionalNullable;
+  positional attribute String? positionalWithDefault = "Default value";
+
+  // named attributes
+  attribute String? name = "Unnamed"; // nullable attribute with default value
+  attribute String email; // required attribute
+
+  // State variable(they are private by default)
+  state num counter = 12;
+
+  // Provider watchs(context.watch<T>())
+  watch Profile profile;
+
+  // Provider read(context.read<T>())
+  read Api api;
+
+  // Provider selects(context.select<T, R>(R cb(T value)))
+  select Customer{customerName: name} CustomerProvider customer;
+}
+
+// Widget builder
+Container(
+  child: Text('$myAttribute: $counter'),
+);
