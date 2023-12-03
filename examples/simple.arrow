@@ -1,0 +1,4 @@
+widget MyWidget {
+  attribute String my_attribute;
+  positional attribute String my_positional_attribute;
+}
