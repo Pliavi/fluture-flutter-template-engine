@@ -1,22 +1,20 @@
-use std::{error::Error, io};
+mod codegen;
+mod combinators;
+
+use codegen::generate_code;
+use combinators::attr_cmb::{attribute_tag, Attribute};
+use combinators::state_cmb::{state_tag, State};
+
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::channel;
+
+use notify::{EventKind, RecursiveMode, Watcher};
 
 use nom::{
-    branch::alt,
     bytes::complete::{tag, take_until1},
-    character::complete::{line_ending, space0, space1},
-    combinator::opt,
+    character::complete::{multispace0, space0, space1},
     IResult,
 };
-
-pub struct Attribute {
-    name: String,
-    atype: String,
-}
-
-pub struct State {
-    name: String,
-    atype: String,
-}
 
 pub struct Widget {
     name: String,
@@ -25,14 +23,101 @@ pub struct Widget {
     states: Vec<State>,
 }
 
+fn dir_watcher(path: &Path) -> notify::Result<()> {
+    let (tx, rx) = channel();
+    let mut watcher = notify::recommended_watcher(tx).unwrap();
+
+    watcher.watch(path, RecursiveMode::Recursive)?;
+
+    loop {
+        match rx.recv() {
+            Ok(event) => {
+                let u_event = event.unwrap();
+                let event_kind = u_event.kind;
+                match event_kind {
+                    EventKind::Create(_) => {
+                        let path_buf = u_event.paths[0].to_path_buf();
+                        let extension = path_buf.extension();
+
+                        if extension.is_some() && extension.unwrap() == "arrow" {
+                            println!("File created: {:?}", u_event.paths);
+                            process_file(&path_buf).unwrap();
+                        }
+                    }
+                    EventKind::Modify(_) => {
+                        let path_buf = u_event.paths[0].to_path_buf();
+                        let extension = path_buf.extension();
+
+                        if extension.is_some() && extension.unwrap() == "arrow" {
+                            println!("File modified: {:?}", u_event.paths);
+                            process_file(&path_buf).unwrap();
+                        }
+                    }
+                    EventKind::Remove(_) => {
+                        let path_buf = u_event.paths[0].to_path_buf();
+                        let extension = path_buf.extension();
+
+                        if extension.is_some() && extension.unwrap() == "arrow" {
+                            println!("File removed: {:?}", u_event.paths);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Err(e) => println!("watch error: {:?}", e),
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let file_path = "./examples/simple.arrow";
-    let source = std::fs::read_to_string(file_path)?;
+    let args = std::env::args();
+    let mut path = String::from(".");
+    let mut watch = false;
+
+    for arg in args {
+        if arg == "--watch" {
+            watch = true;
+        } else {
+            path = arg;
+        }
+    }
+
+    let path = Path::new(&path);
+
+    if watch {
+        dir_watcher(path)?;
+    } else {
+        let file = Path::new(path).to_path_buf();
+
+        process_file(&file)?;
+    }
+
+    Ok(())
+}
+
+fn process_file(file: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let source = std::fs::read_to_string(file)?;
     let res = parse(&source);
 
     match res {
         Ok((_, code)) => {
-            println!("{}", code);
+            // create a file with the same name as the input file, but with a .dart extension
+            let mut output_file_path = file.clone();
+            output_file_path.set_extension("dart");
+
+            let output_file_path = output_file_path.to_str().expect("Invalid path");
+
+            std::fs::write(output_file_path, code)?;
+            // run dart format in the output file
+
+            let output = std::process::Command::new("dart")
+                .arg("format")
+                .arg(output_file_path)
+                .output()?;
+
+            if !output.status.success() {
+                println!("Error: {:?}", output);
+            }
         }
         Err(e) => {
             println!("Error: {:?}", e);
@@ -56,8 +141,8 @@ fn program(input: &str) -> IResult<&str, String> {
         states: vec![],
     };
 
-    let (input, _) = space_line_end0(input)?;
-    let (input, _) = space_line_end0(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = multispace0(input)?;
 
     let (input, _) = tag("widget")(input)?;
     let (input, _) = space1(input)?;
@@ -68,18 +153,30 @@ fn program(input: &str) -> IResult<&str, String> {
     let (input, _) = space0(input)?;
     let (input, _) = tag("{")(input)?;
 
-    let (input, _) = space_line_end0(input)?;
+    let (input, _) = multispace0(input)?;
 
     let mut input = input;
     while !input.starts_with("}") {
-        let (remaining_input, (attribute, is_positional)) = attribute(input)?;
-        if is_positional {
+        if input.starts_with("state") {
+            let (remaining_input, state) = state_tag(input)?;
+            widget.states.push(state);
+
+            let (remaining, _) = multispace0(remaining_input)?;
+            let (remaining, _) = space0(remaining)?;
+
+            input = remaining;
+            continue;
+        }
+
+        let (remaining_input, attribute) = attribute_tag(input)?;
+
+        if attribute.is_positional {
             widget.positional_attributes.push(attribute);
         } else {
             widget.named_attributes.push(attribute);
         }
 
-        let (remaining, _) = space_line_end0(remaining_input)?;
+        let (remaining, _) = multispace0(remaining_input)?;
         let (remaining, _) = space0(remaining)?;
 
         input = remaining;
@@ -90,82 +187,4 @@ fn program(input: &str) -> IResult<&str, String> {
     let (_, code) = generate_code(widget).unwrap();
 
     Ok(("", code))
-}
-
-fn generate_code(widget: Widget) -> IResult<(), String> {
-    let mut code = String::from("class ");
-
-    code.push_str(&widget.name);
-    code.push_str(" extends StatelessWidget {\n");
-
-    for attribute in widget.positional_attributes.iter() {
-        code.push_str("    ");
-        code.push_str(&attribute.atype);
-        code.push_str(" ");
-        code.push_str(&attribute.name);
-        code.push_str(";\n");
-    }
-
-    for attribute in widget.named_attributes.iter() {
-        code.push_str("    ");
-        code.push_str(&attribute.atype);
-        code.push_str(" ");
-        code.push_str(&attribute.name);
-        code.push_str(";\n");
-    }
-
-    for state in widget.states.iter() {
-        code.push_str("    ");
-        code.push_str(&state.atype);
-        code.push_str(" ");
-        code.push_str(&state.name);
-        code.push_str(";\n");
-    }
-
-    code.push_str("}\n");
-
-    Ok(((), code))
-}
-
-fn space_line_end0(input: &str) -> IResult<&str, &str> {
-    alt((line_ending, space0))(input)
-}
-
-fn is_attribute_positional(input: &str) -> IResult<&str, bool> {
-    let (input, positional_result) = opt(tag("positional"))(input)?;
-
-    let is_positional = positional_result.is_some();
-
-    let (input, _) = space0(input)?;
-
-    Ok((input, is_positional))
-}
-
-fn attribute(input: &str) -> IResult<&str, (Attribute, bool), nom::error::Error<&str>> {
-    let (input, _) = space0(input)?;
-
-    let (input, is_positional) = is_attribute_positional(input)?;
-
-    let (input, _) = tag("attribute")(input)?;
-    let (input, _) = space1(input)?;
-    let (input, attr_type) = take_until1(" ")(input)?;
-    let (input, _) = space1(input)?;
-
-    let (input, attr_name) = alt((take_until1("="), take_until1(";")))(input)?;
-    if input.starts_with("=") {
-        // TODO: parse const expression
-    }
-    let (input, _) = space0(input)?;
-    let (input, _) = tag(";")(input)?;
-
-    Ok((
-        input,
-        (
-            Attribute {
-                name: String::from(attr_name),
-                atype: String::from(attr_type),
-            },
-            is_positional,
-        ),
-    ))
 }
