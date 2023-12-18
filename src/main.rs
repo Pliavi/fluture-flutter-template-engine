@@ -1,190 +1,139 @@
-mod codegen;
 mod combinators;
-
-use codegen::generate_code;
-use combinators::attr_cmb::{attribute_tag, Attribute};
-use combinators::state_cmb::{state_tag, State};
-
-use std::path::{Path, PathBuf};
-use std::sync::mpsc::channel;
-
-use notify::{EventKind, RecursiveMode, Watcher};
-
-use nom::{
-    bytes::complete::{tag, take_until1},
-    character::complete::{multispace0, space0, space1},
-    IResult,
+use combinators::{
+    events::{event, Event},
+    style::{style_props0, Style},
 };
 
-pub struct Widget {
+use nom::{
+    bytes::complete::{tag, take_until, take_while, take_while1},
+    character::complete::{char, line_ending, multispace1, space0, space1},
+    combinator::opt,
+    error::Error,
+    multi::{many0, many0_count},
+    sequence::{delimited, tuple},
+    IResult,
+};
+// Represents a tag, e.g., "<Button[bg:yellow-100] @tap:controller.increment>"
+#[derive(Debug)]
+struct Tag {
     name: String,
-    positional_attributes: Vec<Attribute>,
-    named_attributes: Vec<Attribute>,
-    states: Vec<State>,
+    styles: Vec<Style>,
+    // TODO: change to parameters(that can be any other parameters, except style)
+    events: Vec<Event>,
+    value: Option<String>,
+    children: Vec<Tag>,
 }
 
-fn dir_watcher(path: &Path) -> notify::Result<()> {
-    let (tx, rx) = channel();
-    let mut watcher = notify::recommended_watcher(tx).unwrap();
-
-    watcher.watch(path, RecursiveMode::Recursive)?;
-
-    loop {
-        match rx.recv() {
-            Ok(event) => {
-                let u_event = event.unwrap();
-                let event_kind = u_event.kind;
-                match event_kind {
-                    EventKind::Create(_) => {
-                        let path_buf = u_event.paths[0].to_path_buf();
-                        let extension = path_buf.extension();
-
-                        if extension.is_some() && extension.unwrap() == "arrow" {
-                            println!("File created: {:?}", u_event.paths);
-                            process_file(&path_buf).unwrap();
-                        }
-                    }
-                    EventKind::Modify(_) => {
-                        let path_buf = u_event.paths[0].to_path_buf();
-                        let extension = path_buf.extension();
-
-                        if extension.is_some() && extension.unwrap() == "arrow" {
-                            println!("File modified: {:?}", u_event.paths);
-                            process_file(&path_buf).unwrap();
-                        }
-                    }
-                    EventKind::Remove(_) => {
-                        let path_buf = u_event.paths[0].to_path_buf();
-                        let extension = path_buf.extension();
-
-                        if extension.is_some() && extension.unwrap() == "arrow" {
-                            println!("File removed: {:?}", u_event.paths);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            Err(e) => println!("watch error: {:?}", e),
-        }
-    }
+// Represents a parameter, e.g., "controller: CounterPageController"
+struct Parameter {
+    name: String,
+    type_: String,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = std::env::args();
-    let mut path = String::from(".");
-    let mut watch = false;
-
-    for arg in args {
-        if arg == "--watch" {
-            watch = true;
-        } else {
-            path = arg;
-        }
-    }
-
-    let path = Path::new(&path);
-
-    if watch {
-        dir_watcher(path)?;
-    } else {
-        let file = Path::new(path).to_path_buf();
-
-        process_file(&file)?;
-    }
-
-    Ok(())
+// Represents the widget structure
+struct Widget {
+    name: String,
+    parameters: Vec<Parameter>,
+    body: Vec<Tag>,
 }
 
-fn process_file(file: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let source = std::fs::read_to_string(file)?;
-    let res = parse(&source);
+fn count_indentation(input: &str) -> IResult<&str, usize> {
+    let (input, count) = many0_count(space0)(input)?;
 
-    match res {
-        Ok((_, code)) => {
-            // create a file with the same name as the input file, but with a .dart extension
-            let mut output_file_path = file.clone();
-            output_file_path.set_extension("dart");
-
-            let output_file_path = output_file_path.to_str().expect("Invalid path");
-
-            std::fs::write(output_file_path, code)?;
-            // run dart format in the output file
-
-            let output = std::process::Command::new("dart")
-                .arg("format")
-                .arg(output_file_path)
-                .output()?;
-
-            if !output.status.success() {
-                println!("Error: {:?}", output);
-            }
-        }
-        Err(e) => {
-            println!("Error: {:?}", e);
-        }
-    }
-
-    Ok(())
+    Ok((input, count))
 }
 
-fn parse(source: &str) -> IResult<&str, String> {
-    let (input, result) = program(source)?;
+fn tag_props(input: &str) -> IResult<&str, Tag> {
+    let (input, _) = char('<')(input)?;
+    let (input, tag_name) = take_while1(|c: char| c.is_alphanumeric())(input)?;
+    let (input, tag_styles) = style_props0(input)?;
 
-    Ok((input, result))
+    // TODO: Use parameter parser to group events, and other parameters types
+    //       And be able to ignore the order of the parameters
+    let (input, tag_events) = many0(event)(input)?;
+
+    let (input, _) = char('>')(input)?;
+
+    Ok((
+        input,
+        Tag {
+            name: tag_name.to_string(),
+            styles: tag_styles,
+            events: tag_events,
+            value: None,
+            children: vec![],
+        },
+    ))
 }
 
-fn program(input: &str) -> IResult<&str, String> {
-    let mut widget = Widget {
-        name: String::from(""),
-        positional_attributes: vec![],
-        named_attributes: vec![],
-        states: vec![],
-    };
-
-    let (input, _) = multispace0(input)?;
-    let (input, _) = multispace0(input)?;
-
-    let (input, _) = tag("widget")(input)?;
-    let (input, _) = space1(input)?;
-
-    let (input, widget_name) = take_until1(" ")(input)?;
-    widget.name = String::from(widget_name);
+// Parser for a tag, e.g., "<Button[bg:yellow-100] @tap:controller.increment>"
+fn tag_list_from_indent(input: &str) -> IResult<&str, Tag> {
+    let (input, tag) = tag_props(input)?;
 
     let (input, _) = space0(input)?;
-    let (input, _) = tag("{")(input)?;
+    let (input, value) = opt(take_until("\n"))(input)?;
 
-    let (input, _) = multispace0(input)?;
+    let (input, _) = line_ending(input)?;
 
-    let mut input = input;
-    while !input.starts_with("}") {
-        if input.starts_with("state") {
-            let (remaining_input, state) = state_tag(input)?;
-            widget.states.push(state);
+    let (input, curr_indent) = count_indentation(input)?;
 
-            let (remaining, _) = multispace0(remaining_input)?;
-            let (remaining, _) = space0(remaining)?;
+    // FIX: not setting the children based on the indentation
+    // let (input, children) = many0(|input| tag_list_from_indent(curr_indent, input))(input)?;
 
-            input = remaining;
-            continue;
-        }
+    let tag = Tag {
+        value: value.map(|s| s.to_string()),
+        children: vec![],
+        ..tag
+    };
 
-        let (remaining_input, attribute) = attribute_tag(input)?;
+    Ok((input, (tag)))
+}
 
-        if attribute.is_positional {
-            widget.positional_attributes.push(attribute);
-        } else {
-            widget.named_attributes.push(attribute);
-        }
+// A parser for a single parameter, e.g., "controller: CounterPageController"
+fn parameter(input: &str) -> IResult<&str, (&str, &str)> {
+    let (input, (name, _, _, _, type_)) = tuple((
+        take_while(|c: char| c.is_alphanumeric()),
+        space0,
+        tag(":"),
+        space0,
+        take_while(|c: char| c.is_alphanumeric()),
+    ))(input)?;
 
-        let (remaining, _) = multispace0(remaining_input)?;
-        let (remaining, _) = space0(remaining)?;
+    Ok((input, (name, type_)))
+}
 
-        input = remaining;
+// A parser for the parameters list, e.g., "(controller: CounterPageController)"
+fn parameters(input: &str) -> IResult<&str, Vec<(&str, &str)>> {
+    delimited(
+        char('('),
+        nom::multi::separated_list0(char(','), parameter),
+        char(')'),
+    )(input)
+}
+
+// The main parser for the whole syntax
+fn widget_parser(input: &str) -> IResult<&str, (&str, &str, Vec<(&str, &str)>, Vec<Tag>)> {
+    let (input, _) = tag("widget")(input)?;
+    let (input, _) = space1(input)?;
+    let (input, widget_name) = take_while1(|c: char| c.is_alphanumeric())(input)?;
+    let (input, _) = space0(input)?;
+    let (input, params) = parameters(input)?;
+    let (input, _) = multispace1(input)?;
+    let (input, tags) = many0(tag_list_from_indent)(input)?;
+
+    Ok((input, ("widget", widget_name, params, tags)))
+}
+
+fn main() {
+    let input = "\
+      widget CounterPage(controller: CounterPageController)
+        <Button[bg:yellow-100] @tap:controller.increment>
+            <Text> \"Counter: \"
+            <Text> controller.counter
+  ";
+
+    match widget_parser(input) {
+        Ok((_, result)) => println!("Parsed successfully: {:?}", result),
+        Err(e) => println!("Error parsing input: {:?}", e),
     }
-
-    let (_, _) = tag("}")(input)?;
-
-    let (_, code) = generate_code(widget).unwrap();
-
-    Ok(("", code))
 }
