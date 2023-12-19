@@ -8,7 +8,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Debug executable 'wdart'",
-      "console": "externalTerminal",
+      "console": "integratedTerminal",
       "cargo": {
         "args": ["build", "--bin=wdart", "--package=wdart"],
         "filter": {

@@ -7,8 +7,10 @@ use nom::{
     IResult,
 };
 
-#[derive(Debug)]
-pub struct Style {
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StyleProp {
     key: String,
     value: String,
 }
@@ -40,13 +42,13 @@ pub struct Style {
 /// assert_eq!(styles[1].key, "bg");
 /// assert_eq!(styles[1].value, "blue0");
 /// ```
-pub fn style_props0(input: &str) -> IResult<&str, Vec<Style>> {
+pub fn style_props0(input: &str) -> IResult<&str, Vec<StyleProp>> {
     let (input, tag_styles) = opt(style_list)(input)?;
 
-    let styles: Vec<Style> = tag_styles
+    let styles: Vec<StyleProp> = tag_styles
         .unwrap_or_default()
         .into_iter()
-        .map(|(key, value)| Style {
+        .map(|(key, value)| StyleProp {
             key: key.to_string(),
             value: value.to_string(),
         })
