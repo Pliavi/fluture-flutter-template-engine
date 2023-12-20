@@ -1,0 +1,36 @@
+grammar;
+
+pub Widget: (String, Vec<Property>, Vec<Widget>) = {
+    "widget" <name:Ident> <params:ParamList> <children:WidgetTagChildren> => (name, params, children),
+};
+
+ParamList: Vec<Property> = {
+    "(" <params:PropertyList> ")" => params,
+};
+
+Property: (String, String) = {
+    <name:Ident> ":" <value:Ident> => (name, value),
+};
+
+PropertyList: Vec<Property> = {
+    <properties:Property*> "," => properties,
+};
+
+Ident: String = {
+    <name:r"[a-zA-Z_][a-zA-Z0-9_]*"> => name.to_string(),
+};
+
+WidgetTagChildren: Vec<Widget> = {
+    <children:WidgetTag+> => children,
+};
+
+WidgetTag: (String, Vec<Property>, Vec<WidgetTag>) = {
+    "<" <name:Ident> <props:Properties> ">" <content:r"[a-zA-Z_][a-zA-Z0-9_]*"> <children:WidgetTagChildren> "</" <name2:Ident> ">" => {
+        assert_eq!(name, name2);
+        (name, props, children)
+    },
+};
+
+Properties: Vec<Property> = {
+    "[" <props:PropertyList> "]" => props,
+};
