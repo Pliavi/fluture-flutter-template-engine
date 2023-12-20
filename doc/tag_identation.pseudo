@@ -1,0 +1,68 @@
+/**
+* pseudo code for tag children by identation
+* the ideia is turn this:
+* <Widget>
+*   <Button>
+*     <Text> "+"
+*     <Text> "plus"
+*   <Button>  
+*     <Text> "-"
+*     <Text> "minus"
+*
+* Into this:
+* Widget {
+*   children: [
+*     Button {
+*       children: [
+*         Text { content: "+" },
+*         Text { content: "plus" }
+*       ]
+*     },
+*     Button {
+*       children: [
+*         Text { content: "-" },
+*         Text { content: "minus" }
+*       ]
+*     }
+*   ]
+* }
+**/
+
+var input = "<Widget>\n  <Button>\n    <Text> \"+\"\n    <Text> \"plus\"\n  <Button>  \n    <Text> \"-\"\n    <Text> \"minus\"";
+
+struct Tag {
+  tag: str,
+  content: str,
+  children: Vec<Tag>
+}
+
+def get_tag(identation: num, input: str) -> Tag {
+  var identation_level = count_identation(input);
+  var tag = get_tag(input);
+  var content = get_content(input);
+  
+  var next_identation_level = count_identation(input);
+  
+  var children = next_identation_level > identation_level 
+                  ? get_children(next_identation_level, input)
+                  : Vec<Tag>();
+
+  return Tag {
+    tag: tag,
+    content: content,
+    children: children
+  }
+}
+
+def get_children(identation: num, input: str) -> Vec<Tag> {
+  var space_reps = " ".repeat(identation);
+
+  var children = many0(
+      pair(
+        space_reps,
+        get_tag(identation, input)
+      )
+    )(input);
+  
+  return children;
+}

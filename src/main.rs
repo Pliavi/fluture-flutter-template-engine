@@ -56,7 +56,7 @@ fn widget_parser(input: &str) -> IResult<&str, Widget> {
     let (input, _) = space0(input)?;
     let (input, params) = parameters(input)?;
     let (input, _) = multispace1(input)?;
-    let (input, body) = root_tag(0, input)?;
+    let (input, body) = root_tag(input)?;
 
     Ok((
         input,

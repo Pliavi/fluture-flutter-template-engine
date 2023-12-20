@@ -1,8 +1,10 @@
 use nom::{
-    bytes::complete::{take_until, take_while1},
+    bytes::complete::{tag, take_until, take_while1},
     character::complete::{char, line_ending, space0, space1},
     combinator::opt,
-    multi::{many0, many0_count},
+    combinator::peek,
+    multi::{many0, many0_count, many1},
+    sequence::{pair, preceded},
     IResult,
 };
 
@@ -23,51 +25,38 @@ pub struct Tag {
     children: Vec<Tag>,
 }
 
-pub fn root_tag(indent: usize, input: &str) -> IResult<&str, Tag> {
-    // take tag
-    let (input, _) = space0(input)?;
-    let (input, tag) = only_tag(input)?;
+pub fn root_tag(input: &str) -> IResult<&str, Tag> {
+    let (_, curr_indent) = count_indentation(input)?;
+
+    let (input, gotten_tag) = only_tag(input)?;
     let (input, _) = space0(input)?;
 
-    // take value of tag(for example, the text of a text tag)
     let (input, value) = opt(take_until("\n"))(input)?;
     let value = value.map(|s| s.to_string());
 
     let (input, _) = line_ending(input)?;
 
-    // start to check for children
-    let (input, curr_indent) = count_indentation(input)?;
-    // if there are no children, return the tag
+    let (_, next_indent) = count_indentation(input)?;
 
-    if curr_indent == 0 || input.is_empty() || curr_indent <= indent {
-        return Ok((input, Tag { value, ..tag }));
-    }
+    let (input, children) = if next_indent >= curr_indent {
+        let spaces = " ".repeat(next_indent);
 
-    let tag = Tag {
-        value,
-        children,
-        ..tag
+        let (input, children) = peek(many0(preceded(space0, root_tag)))(input)?;
+        let (input, _) = many0(preceded(space0, root_tag))(input)?;
+
+        (input, children)
+    } else {
+        (input, vec![])
     };
 
-    Ok((input, tag))
+    let gotten_tag = Tag {
+        value,
+        children,
+        ..gotten_tag
+    };
+
+    Ok((input, gotten_tag))
 }
-
-// Parser for a tag, e.g., "<Button[bg:yellow-100] @tap:controller.increment>"
-// fn tag_list_from_indent(indent: usize, input: &str) -> IResult<&str, Vec<Tag>> {
-//     let (input, curr_indent) = count_indentation(input)?;
-
-//     if curr_indent == indent || input.is_empty() {
-//         return Ok((input, vec![]));
-//     }
-
-//     let (input, tag) = root_tag(input)?;
-
-//     let (input, mut tags) = tag_list_from_indent(indent, input)?;
-
-//     tags.insert(0, tag);
-
-//     Ok((input, tags))
-// }
 
 fn only_tag(input: &str) -> IResult<&str, Tag> {
     let (input, _) = char('<')(input)?;
