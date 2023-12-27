@@ -8,21 +8,21 @@ pub enum TokenKind {
     Number(f64),
 
     // operators
-    Asterisk, // *
-    Equals,   // =
-    Plus,     // +
-    Slash,    // /
-    LessThan, // <
-    MoreThan, // >
-    Minus,    // -
-    Colon,    // :
+    Asterisk,    // *
+    Equals,      // =
+    Plus,        // +
+    Slash,       // /
+    LessThan,    // <
+    GreaterThan, // >
+    Minus,       // -
+    Colon,       // :
 
     // Words
     Identifier(String),
     QuotedString(String),
 
     // WS
-    Whitespace(u8),
+    Indentation(u8),
 
     // Keywords
     WidgetKW,
@@ -56,6 +56,7 @@ impl From<f64> for TokenKind {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     kind: TokenKind,
     start: usize,

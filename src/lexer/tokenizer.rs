@@ -51,14 +51,33 @@ lexer_test!(tokenize_string_with_multiple_decimal_points, tokenize_number, "12.3
 lexer_test!(FAIL: cant_tokenize_a_string_as_a_decimal, tokenize_number, "asdfghj");
 lexer_test!(tokenizing_decimal_stops_at_alpha, tokenize_number, "123.4asdfghj" => 123.4);
 
+trait CharExtension {
+    fn is_ws_without_nl(&self) -> bool;
+}
+
+impl CharExtension for char {
+    fn is_ws_without_nl(&self) -> bool {
+        self.is_whitespace() && *self != '\n'
+    }
+}
+
 pub fn skip_whitespace(input: &str) -> usize {
-    match take_while(input, |ch| ch.is_whitespace()) {
+    let first_char = match input.chars().next() {
+        Some(ch) => ch,
+        _ => return 0,
+    };
+
+    if !first_char.is_ws_without_nl() {
+        return 0;
+    }
+
+    match take_while(input, |ch| ch != '\n' && ch.is_whitespace()) {
         Ok((_, len_skipped)) => len_skipped,
         _ => 0,
     }
 }
 
-pub fn capture_whitespace(input: &str) -> Result<(TokenKind, usize)> {
+pub fn capture_indentation(input: &str) -> Result<(TokenKind, usize)> {
     let length = match take_while(input, |ch| ch.is_whitespace()) {
         Ok((_, len_skipped)) => len_skipped,
         _ => 0,
@@ -66,7 +85,12 @@ pub fn capture_whitespace(input: &str) -> Result<(TokenKind, usize)> {
 
     let whitespace_size = u8::try_from(length)?;
 
-    Ok((TokenKind::Whitespace(whitespace_size), length))
+    Ok((TokenKind::Indentation(whitespace_size), length))
+}
+
+#[test]
+fn testws() {
+    assert!('\n'.is_whitespace());
 }
 
 #[test]
@@ -113,7 +137,7 @@ pub fn tokenize_single_token(input: &str) -> Result<(TokenKind, usize)> {
         '+' => (TokenKind::Plus, 1),
         '/' => (TokenKind::Slash, 1),
         '<' => (TokenKind::LessThan, 1),
-        '>' => (TokenKind::MoreThan, 1),
+        '>' => (TokenKind::GreaterThan, 1),
         '-' => (TokenKind::Minus, 1),
         ':' => (TokenKind::Colon, 1),
         '@' => (TokenKind::At, 1),
@@ -124,28 +148,66 @@ pub fn tokenize_single_token(input: &str) -> Result<(TokenKind, usize)> {
         '[' => (TokenKind::OpenSquare, 1),
         ';' => (TokenKind::Semicolon, 1),
         '0'..='9' => tokenize_number(input)?,
+        '"' => {
+            let (got, len_read) = take_while(&input[1..], |ch| ch != '"')?;
+            let token = TokenKind::QuotedString(got.to_string());
+            (token, len_read + 2)
+        }
         c @ '_' | c if c.is_alphabetic() => tokenize_ident(input)?,
-        c if c.is_whitespace() => capture_whitespace(input)?,
+        // c if c.is_whitespace() => (_, skip_whitespace(input)),
+        '\n' => capture_indentation(input)?,
         _ => bail!(ErrorKind::InvalidData), // ErrorKind::UnknownCharacter(other)
     };
 
     Ok((token_got, length))
 }
 
-struct Tokenizer<'a> {
-    current_index: usize,
-    remaining_text: &'a str,
+pub fn lex(input: &str) -> Result<Vec<Token>> {
+    let mut tokens = Vec::new();
+    let mut remaining = input;
+    let mut row = 1;
+    let mut col_start = 1;
+    let mut col_end = 1;
+    let mut is_line_start = true;
+
+    loop {
+        if !is_line_start {
+            let ws = skip_whitespace(remaining);
+            col_start += ws;
+            remaining = &remaining[ws..]
+        } else {
+            is_line_start = false;
+        }
+
+        // TODO: maybe check for any whitespace too?
+        if remaining.is_empty() {
+            break;
+        }
+
+        let (token, len_read) = tokenize_single_token(remaining)?;
+        match token {
+            TokenKind::Indentation(_) => {
+                is_line_start = true;
+                row += 1;
+                col_start = 1;
+                col_end = col_start + len_read;
+            }
+            _ => {
+                col_end = col_start + len_read;
+            }
+        }
+
+        // let start = input.len() - remaining.len();
+        // let end = start + len_read;
+
+        tokens.push(Token::new(
+            //
+            token, col_start, col_end, row,
+        ));
+
+        col_start = col_end;
+        remaining = &remaining[len_read..];
+    }
+
+    Ok(tokens)
 }
-
-// impl<'a> Tokenizer<'a> {
-//     fn new(input: &str) -> Tokenizer {
-//         Tokenizer {
-//             current_index: 0,
-//             remaining_text: input,
-//         }
-//     }
-
-//     fn next_token(&mut self) ->Result<Option<(TokenKind, usize, usize)>> {
-//       self.
-//     }
-// }
