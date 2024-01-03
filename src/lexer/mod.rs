@@ -1,4 +1,3 @@
-pub mod helpers;
+mod combinators;
 pub mod lexer;
-pub mod lexer_token;
-pub mod tokenizer;
+pub mod token_struct;

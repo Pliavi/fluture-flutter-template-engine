@@ -22,7 +22,7 @@ pub enum TokenKind {
     QuotedString(String),
 
     // WS
-    Indentation(u8),
+    Indentation(usize),
 
     // Keywords
     WidgetKW,
@@ -58,10 +58,10 @@ impl From<f64> for TokenKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
-    kind: TokenKind,
-    start: usize,
-    end: usize,
-    line: usize,
+    pub kind: TokenKind,
+    pub start: usize,
+    pub end: usize,
+    pub line: usize,
 }
 
 impl Token {
